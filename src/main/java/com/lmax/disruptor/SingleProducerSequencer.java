@@ -17,9 +17,9 @@ package com.lmax.disruptor;
 
 import com.lmax.disruptor.util.Util;
 
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.concurrent.locks.LockSupport;
 
 abstract class SingleProducerSequencerPad extends AbstractSequencer
@@ -63,6 +63,8 @@ abstract class SingleProducerSequencerFields extends SingleProducerSequencerPad
 
 public final class SingleProducerSequencer extends SingleProducerSequencerFields
 {
+    private volatile Thread producerThread;
+
     protected byte
         p10, p11, p12, p13, p14, p15, p16, p17,
         p20, p21, p22, p23, p24, p25, p26, p27,
@@ -264,7 +266,13 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
 
     private boolean sameThread()
     {
-        return ProducerThreadAssertion.isSameThreadProducingTo(this);
+        final Thread currentThread = Thread.currentThread();
+        Thread producer = producerThread;
+        if (producer == null)
+        {
+            producer = (Thread) ProducerThreadAssertion.PRODUCER_THREAD.compareAndExchange(this, null, currentThread);
+        }
+        return producer == null || producer == currentThread;
     }
 
     /**
@@ -272,24 +280,18 @@ public final class SingleProducerSequencer extends SingleProducerSequencerFields
      */
     private static class ProducerThreadAssertion
     {
-        /**
-         * Tracks the threads publishing to {@code SingleProducerSequencer}s to identify if more than one
-         * thread accesses any {@code SingleProducerSequencer}.
-         * I.e. it helps developers detect early if they use the wrong
-         * {@link com.lmax.disruptor.dsl.ProducerType}.
-         */
-        private static final Map<SingleProducerSequencer, Thread> PRODUCERS = new HashMap<>();
+        private static final VarHandle PRODUCER_THREAD;
 
-        public static boolean isSameThreadProducingTo(final SingleProducerSequencer singleProducerSequencer)
+        static
         {
-            synchronized (PRODUCERS)
+            try
             {
-                final Thread currentThread = Thread.currentThread();
-                if (!PRODUCERS.containsKey(singleProducerSequencer))
-                {
-                    PRODUCERS.put(singleProducerSequencer, currentThread);
-                }
-                return PRODUCERS.get(singleProducerSequencer).equals(currentThread);
+                PRODUCER_THREAD = MethodHandles.lookup()
+                        .findVarHandle(SingleProducerSequencer.class, "producerThread", Thread.class);
+            }
+            catch (final ReflectiveOperationException e)
+            {
+                throw new ExceptionInInitializerError(e);
             }
         }
     }

@@ -70,6 +70,23 @@ The JCStress task defaults to two CPUs and disables affinity for portability.
 Use `-PjcstressCpus=8 -PjcstressAffinity=GLOBAL` on a suitable Linux benchmark host.
 A passing stress run is evidence for the tested environment, not a proof for every architecture.
 
+==== Producer assertions
+
+Single-producer thread ownership is checked when Java assertions are enabled.
+The check binds a sequencer to the first thread calling `next`; another thread is rejected before it claims a sequence.
+Ownership is stored on the sequencer, so separate sequencers do not share a lock or retain each other through a global registry.
+This diagnostic check does not make `ProducerType.SINGLE` safe for concurrent producers.
+
+[source,shell script]
+----
+$ ./gradlew jmh '-PjmhIncludes=com.lmax.disruptor.ProductionSequencerBenchmark.publishSingle' -PjmhAssertions=true
+----
+
+Compare both assertion-enabled and assertion-disabled runs.
+An improvement with `-ea` measures the diagnostic path; it does not imply a faster assertion-disabled production pipeline.
+The benchmark uses independent sequencers per thread, so running its JMH jar with `-t 4` measures four independent producers,
+not four producers sharing a single-producer sequencer.
+
 ==== Isolated CPU benchmarking
 
 Some JMH Benchmarks can be run on machines with isolated cpus to get results with less error.
