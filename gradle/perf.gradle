@@ -22,3 +22,21 @@ task perfJar(type: Jar, group: 'build') {
     from { configurations.perftestRuntimeClasspath.findAll { it.isFile() }.collect { zipTree(it) } }
     with jar
 }
+
+tasks.register('threadModel', JavaExec) {
+    group = 'verification'
+    description = 'Compares producer and consumer thread models in an isolated JVM.'
+    classpath = sourceSets.perftest.runtimeClasspath
+    mainClass = 'com.lmax.disruptor.ThreadModelComparison'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    jvmArgs '-Xms256m', '-Xmx256m'
+    args providers.gradleProperty('threadProducer').getOrElse('PLATFORM'),
+            providers.gradleProperty('threadConsumer').getOrElse('PLATFORM'),
+            providers.gradleProperty('threadWait').getOrElse('BLOCKING'),
+            providers.gradleProperty('threadWorkload').getOrElse('CPU'),
+            providers.gradleProperty('threadStreams').getOrElse('1'),
+            providers.gradleProperty('threadInFlight').getOrElse('16'),
+            providers.gradleProperty('threadWarmupSeconds').getOrElse('2'),
+            providers.gradleProperty('threadMeasureSeconds').getOrElse('3'),
+            providers.gradleProperty('threadOutput').getOrElse(layout.buildDirectory.file('reports/thread-model/result.json').get().asFile.absolutePath)
+}

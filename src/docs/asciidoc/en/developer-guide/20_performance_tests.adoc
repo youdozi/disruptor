@@ -87,7 +87,62 @@ An improvement with `-ea` measures the diagnostic path; it does not imply a fast
 The benchmark uses independent sequencers per thread, so running its JMH jar with `-t 4` measures four independent producers,
 not four producers sharing a single-producer sequencer.
 
-==== Isolated CPU benchmarking
+=== Platform and Virtual Threads
+
+`ThreadModelComparison` measures persistent producer/consumer pipelines in a separate JVM.
+Producer and consumer thread kinds are selected independently.
+Each pipeline has one producer and one consumer, so `ProducerType.SINGLE` remains valid for either thread kind.
+This does not model creating a new virtual thread for every request.
+
+[source,shell script]
+----
+$ ./gradlew threadModel -PthreadProducer=VIRTUAL -PthreadConsumer=PLATFORM -PthreadWait=BLOCKING -PthreadWorkload=CPU -PthreadStreams=1
+----
+
+Options:
+
+* `threadProducer`, `threadConsumer`: `PLATFORM` or `VIRTUAL`.
+* `threadWait`: `BLOCKING` or `BUSY_SPIN`.
+* `threadWorkload`: `CPU` (64 dependent arithmetic rounds) or `WAIT` (a 1 ms sleep per event).
+  `WAIT` simulates blocking I/O wait; it does not measure a database, socket or remote service.
+* `threadStreams`: independent pipelines, default `1`; use `16` to examine oversubscription.
+* `threadInFlight`: admitted events per pipeline, default `16`, range `1..256` with a fixed 1024-slot ring.
+* `threadWarmupSeconds`, `threadMeasureSeconds`: defaults `2` and `3`.
+* `threadOutput`: JSON output path, default `build/reports/thread-model/result.json`.
+
+Warmup and measurement use the same payload validation, histogram recording and handler work.
+The reported window uses fresh histograms without resetting counters while workers are running.
+Every worker reaches a blocking start barrier before the warmup begins.
+Worker failures and shutdown timeouts fail the run.
+
+`eventsPerSecond` counts events admitted and completed inside the measurement window.
+`p99Micros` measures admission to handler completion, including ring access, queueing and handler work;
+it excludes waiting for the admission semaphore, which bounds outstanding work.
+This is a closed-loop experiment, not an open-loop overload/SLO measurement.
+`censored` counts admitted events not completed before the deadline; these are excluded from percentiles.
+`cpuCores` is process CPU time divided by elapsed CPU sampling time: `1.0` means one fully busy core,
+including scheduler, measurement and GC work.
+The JSON also records actual worker kinds, scheduler parallelism, JDK and per-pipeline completion counts.
+
+`NO_PROGRESS` means no event completed during measurement; `PARTIAL_PROGRESS` means at least one pipeline completed no events.
+Both indicate a liveness problem. Percentiles from progressing pipelines must not be interpreted as covering stalled pipelines.
+In particular, enough virtual consumers using `BUSY_SPIN` can occupy the carrier threads and prevent producers from running.
+The main control thread is a platform thread, so it can still stop the experiment.
+
+For repeated comparisons, build `perfJar` and start a new JVM for each configuration:
+
+[source,shell script]
+----
+$ ./gradlew perfJar
+$ java -da -Xms256m -Xmx256m -cp build/libs/disruptor-perf-4.0.0.jdk25-SNAPSHOT.jar com.lmax.disruptor.ThreadModelComparison VIRTUAL PLATFORM BLOCKING CPU 1 16 2 3 /tmp/thread-model.json
+----
+
+The manual `Platform and virtual thread comparison` workflow runs all 32 combinations of thread kinds,
+wait strategies, workloads and 1/16 pipelines twice in fresh JVMs.
+Shared CI results verify execution; use an otherwise idle target machine and repeat runs for performance decisions.
+Keep machine, JVM arguments and carrier parallelism consistent, and compare throughput, p99, censored events and CPU together.
+
+=== Isolated CPU benchmarking
 
 Some JMH Benchmarks can be run on machines with isolated cpus to get results with less error.
 

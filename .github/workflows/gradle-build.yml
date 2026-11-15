@@ -24,6 +24,8 @@ jobs:
         uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
       - name: Build with Gradle
         run: ./gradlew build examplesClasses jmhJar jcstressClasses perfJar --console=plain
+      - name: Check virtual-thread comparison runner
+        run: ./gradlew threadModel -PthreadProducer=VIRTUAL -PthreadConsumer=VIRTUAL -PthreadWarmupSeconds=1 -PthreadMeasureSeconds=1 --console=plain
       - name: Archive artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
