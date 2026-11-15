@@ -1,5 +1,9 @@
 = LMAX Disruptor
 
+This fork targets JDK 25 and builds with the Gradle wrapper using a Java 25 toolchain.
+See link:src/docs/asciidoc/en/developer-guide/10_getting_and_building.adoc[building]
+and link:src/docs/asciidoc/en/developer-guide/20_performance_tests.adoc[performance measurement] for commands and benchmark scope.
+
 image:https://github.com/LMAX-Exchange/disruptor/workflows/Java%20CI%20with%20Gradle/badge.svg[Java CI with Gradle,link=https://github.com/LMAX-Exchange/disruptor/actions/workflows/gradle-build.yml]
 image:https://github.com/LMAX-Exchange/disruptor/workflows/CodeQL/badge.svg[CodeQL,link=https://github.com/LMAX-Exchange/disruptor/actions/workflows/codeql-analysis.yml]
 image:https://img.shields.io/github/license/LMAX-Exchange/disruptor[License,link=https://github.com/LMAX-Exchange/disruptor/blob/master/LICENCE.txt]

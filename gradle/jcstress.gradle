@@ -3,7 +3,10 @@
 //
 
 jcstress {
-    jcstressDependency 'org.openjdk.jcstress:jcstress-core:0.11'
+    jcstressDependency = 'org.openjdk.jcstress:jcstress-core:0.16'
     includeTests = true
-    mode = project.getProperties().getOrDefault("mode", "quick")
+    mode = providers.gradleProperty('mode').getOrElse('quick')
+    regexp = providers.gradleProperty('jcstressTests').getOrElse('com.lmax.disruptor.*')
+    cpuCount = providers.gradleProperty('jcstressCpus').getOrElse('2')
+    affinityMode = providers.gradleProperty('jcstressAffinity').getOrElse('NONE')
 }

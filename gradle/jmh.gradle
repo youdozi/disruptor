@@ -9,7 +9,7 @@ sourceSets {
     }
 }
 
-def jmhLibVersion = '1.35'
+def jmhLibVersion = '1.37'
 
 dependencies {
     jmhImplementation "org.openjdk.jmh:jmh-core:${jmhLibVersion}"
@@ -20,13 +20,22 @@ dependencies {
 
 jmh {
     jmhVersion = jmhLibVersion
-    jvmArgsPrepend = ['-Xms256m -Xmx256m -XX:MaxDirectMemorySize=1g']
+    jvmArgsPrepend = ['-Xms256m', '-Xmx256m', '-XX:MaxDirectMemorySize=1g']
     resultsFile.set(project.file("${project.buildDir}/reports/jmh/result.json"))
-    profilers = [ 'pauses' ]
     resultFormat = 'JSON'
     failOnError = true
     verbosity = 'NORMAL'
     includeTests = true
+    includes = [providers.gradleProperty('jmhIncludes').getOrElse('.*')]
+    fork = providers.gradleProperty('jmhForks').getOrElse('2').toInteger()
+    warmupIterations = providers.gradleProperty('jmhWarmupIterations').getOrElse('5').toInteger()
+    iterations = providers.gradleProperty('jmhIterations').getOrElse('5').toInteger()
+    warmup = providers.gradleProperty('jmhWarmupTime').getOrElse('1s')
+    timeOnIteration = providers.gradleProperty('jmhIterationTime').getOrElse('1s')
+    if (providers.gradleProperty('jmhProfilers').isPresent())
+    {
+        profilers = providers.gradleProperty('jmhProfilers').get().split(',').toList()
+    }
 }
 
 task jmhProfilers(type: JavaExec, description:'Lists the available profilers for the jmh task', group: 'jmh') {
