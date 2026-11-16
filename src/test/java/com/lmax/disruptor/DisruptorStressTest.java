@@ -3,29 +3,34 @@ package com.lmax.disruptor;
 import com.lmax.disruptor.dsl.Disruptor;
 import com.lmax.disruptor.dsl.ProducerType;
 import com.lmax.disruptor.util.DaemonThreadFactory;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.locks.LockSupport;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 import static java.lang.Math.max;
 import static org.hamcrest.CoreMatchers.is;
-import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class DisruptorStressTest
 {
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newCachedThreadPool(DaemonThreadFactory.INSTANCE);
 
-    @Test
-    public void shouldHandleLotsOfThreads() throws Exception
+    @ParameterizedTest
+    @MethodSource("waitStrategies")
+    @Timeout(30)
+    public void shouldHandleLotsOfThreads(final WaitStrategy waitStrategy) throws Exception
     {
         Disruptor<TestEvent> disruptor = new Disruptor<>(
                 TestEvent.FACTORY, 1 << 16, DaemonThreadFactory.INSTANCE,
-                ProducerType.MULTI, new BusySpinWaitStrategy());
+                ProducerType.MULTI, waitStrategy);
         RingBuffer<TestEvent> ringBuffer = disruptor.getRingBuffer();
         disruptor.setDefaultExceptionHandler(new FatalExceptionHandler());
 
@@ -41,31 +46,40 @@ public class DisruptorStressTest
         TestEventHandler[] handlers = initialise(disruptor, new TestEventHandler[handlerCount]);
         Publisher[] publishers = initialise(new Publisher[publisherCount], ringBuffer, iterations, barrier, latch);
 
-        disruptor.start();
-
-        for (Publisher publisher : publishers)
+        try
         {
-            executor.execute(publisher);
-        }
+            disruptor.start();
 
-        latch.await();
-        while (ringBuffer.getCursor() < (iterations - 1))
+            for (Publisher publisher : publishers)
+            {
+                executor.execute(publisher);
+            }
+
+            assertTrue(latch.await(20, TimeUnit.SECONDS), "Publishers did not complete");
+            disruptor.shutdown(5, TimeUnit.SECONDS);
+
+            for (Publisher publisher : publishers)
+            {
+                assertThat(publisher.failed, is(false));
+            }
+
+            for (TestEventHandler handler : handlers)
+            {
+                assertThat(handler.messagesSeen, is(iterations * publisherCount));
+                assertThat(handler.failureCount, is(0));
+            }
+        }
+        finally
         {
-            LockSupport.parkNanos(1);
+            disruptor.halt();
+            executor.shutdownNow();
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS), "Publishers did not stop");
         }
+    }
 
-        disruptor.shutdown();
-
-        for (Publisher publisher : publishers)
-        {
-            assertThat(publisher.failed, is(false));
-        }
-
-        for (TestEventHandler handler : handlers)
-        {
-            assertThat(handler.messagesSeen, is(not(0)));
-            assertThat(handler.failureCount, is(0));
-        }
+    private static Stream<WaitStrategy> waitStrategies()
+    {
+        return Stream.of(new BusySpinWaitStrategy(), new BlockingWaitStrategy());
     }
 
     private Publisher[] initialise(

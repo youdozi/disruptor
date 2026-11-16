@@ -87,6 +87,45 @@ An improvement with `-ea` measures the diagnostic path; it does not imply a fast
 The benchmark uses independent sequencers per thread, so running its JMH jar with `-t 4` measures four independent producers,
 not four producers sharing a single-producer sequencer.
 
+==== Blocking Publication and Notification
+
+`BlockingPublicationBenchmark` uses one platform consumer and the JMH publisher threads.
+It selects a single-producer sequencer for one publisher and a multi-producer sequencer for more publishers.
+Every consumed payload is checked against its sequence, and teardown checks that all published events were consumed.
+The `waitStrategy` parameter compares `BLOCKING`, experimental `LITE_BLOCKING` and `BUSY_SPIN`.
+
+[source,shell script]
+----
+$ ./gradlew jmhJar
+$ java -jar build/libs/disruptor-4.0.0.jdk25-SNAPSHOT-jmh.jar 'com.lmax.disruptor.BlockingPublicationBenchmark.publish$' -t 1 -p waitStrategy=BLOCKING -f 5 -wi 3 -i 5 -w 1s -r 1s -prof gc -prof com.lmax.disruptor.ProcessCpuProfiler -jvmArgs '-da -Xms256m -Xmx256m' -rf json -rff /tmp/blocking-1p.json
+----
+
+Repeat with `-t 4` for 4P1C. Throughput and sample-time modes run separately.
+Sample-time percentiles describe the publication call, including waiting for ring capacity;
+they are not event processing completion percentiles.
+`process.cpu` reports average process CPU usage in equivalent fully busy cores, including consumer and JVM work.
+For throughput results, divide CPU usage by events per second to compare CPU time per event.
+
+For a matched target rate, `publishPaced` submits batches every millisecond:
+
+[source,shell script]
+----
+$ java -jar build/libs/disruptor-4.0.0.jdk25-SNAPSHOT-jmh.jar 'com.lmax.disruptor.BlockingPublicationBenchmark.publishPaced$' -t 4 -p waitStrategy=BLOCKING -p eventsPerMillisecond=1000 -f 5 -wi 3 -i 5 -w 1s -r 1s -prof com.lmax.disruptor.ProcessCpuProfiler -jvmArgs '-da -Xms256m -Xmx256m' -rf json -rff /tmp/blocking-paced.json
+----
+
+This targets four million events per second in periodic bursts, not uniformly spaced arrivals.
+Check the achieved throughput before interpreting CPU usage at a matched load.
+If the ring or generator falls behind, the achieved rate can miss the target; this does not establish an overload latency SLO.
+Use `ThreadModelComparison` for completion latency under its documented admission limits.
+
+`bufferSize` defaults to `65536`; smaller values such as `16` and `64` exercise capacity pressure.
+`handlerWork` defaults to `0`; a value such as `256` adds dependent arithmetic operations in the consumer.
+`handlerPauseNanos` defaults to `0`; use `1000000` with a small ring to simulate a consumer that sleeps for 1 ms per event.
+This models a slow consumer, not an external I/O service. Configurations requiring more than five seconds
+to drain the configured sleep across a full ring are rejected.
+Compare completion latency as well as publication-call latency: a change in notification frequency can alter batching
+and thread scheduling even when publication microbenchmarks and correctness checks improve.
+
 === Platform and Virtual Threads
 
 `ThreadModelComparison` measures persistent producer/consumer pipelines in a separate JVM.
