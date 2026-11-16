@@ -49,7 +49,7 @@ tasks.register('batchComparisonDistribution', Sync) {
 
 tasks.register('batchComparison', JavaExec) {
     group = 'verification'
-    description = 'Compares Spring Batch CPU processing with a single Disruptor CPU consumer.'
+    description = 'Compares Spring Batch and Disruptor workers under configurable input and storage conditions.'
     classpath = sourceSets.batchcompare.runtimeClasspath
     mainClass = 'com.lmax.disruptor.batchcompare.SpringBatchComparison'
     javaLauncher = javaToolchains.launcherFor(java.toolchain)
@@ -60,5 +60,11 @@ tasks.register('batchComparison', JavaExec) {
             providers.gradleProperty('batchChunkSize').getOrElse('1024'),
             providers.gradleProperty('batchWarmups').getOrElse('5'),
             providers.gradleProperty('batchRuns').getOrElse('3'),
-            providers.gradleProperty('batchOutput').getOrElse(layout.buildDirectory.file('reports/batch-comparison/result.json').get().asFile.absolutePath)
+            providers.gradleProperty('batchOutput').getOrElse(layout.buildDirectory.file('reports/batch-comparison/result.json').get().asFile.absolutePath),
+            providers.gradleProperty('batchWorkers').getOrElse('1'),
+            providers.gradleProperty('batchWorkload').getOrElse('ARITHMETIC'),
+            providers.gradleProperty('batchInput').getOrElse('GENERATED'),
+            providers.gradleProperty('batchStorage').getOrElse('MEMORY'),
+            providers.gradleProperty('batchWait').getOrElse('BLOCKING'),
+            providers.gradleProperty('batchRingSize').getOrElse('1024')
 }

@@ -215,7 +215,7 @@ Both paths use the same checkpointable generated input, arithmetic transformatio
 transaction manager and JDBC batch writer. The output is an H2 in-memory table, not a remote database or disk benchmark.
 
 * `SPRING`: transform each item in the Spring Batch item processor and write the chunk on the step thread.
-* `DISRUPTOR`: admit the chunk to a 1024-slot single-producer ring, transform it with one platform consumer,
+* `DISRUPTOR` by default: admit the chunk to a 1024-slot single-producer ring, transform it with one platform consumer,
   wait for every result, then write on the original step thread within the chunk transaction.
   The consumer uses `BlockingWaitStrategy`; no database transaction is propagated to it.
 
@@ -249,6 +249,53 @@ Report whole-job elapsed time and process CPU time. The small number of jobs doe
 The manual `Spring Batch and Disruptor comparison` workflow repeats both modes in five fresh JVMs per configuration,
 with 64/4096 arithmetic rounds and chunk sizes 128/1024. Its summary takes medians within each JVM before comparing
 fork medians. Shared-runner measurements verify reproducibility; target-machine performance still needs separate validation.
+
+==== Extended workload and environment matrix
+
+`SPRING_PARALLEL` uses Spring Batch 6's native `TaskExecutor` item processing with a fixed platform-thread pool.
+Reading and writing remain on the step thread. It is the parallel control for Disruptor, with the same worker count.
+`SPRING` remains the serial control and always uses one processing thread.
+
+With multiple Disruptor workers, each worker owns a single-producer ring and one platform consumer.
+Items are assigned cyclically across workers and processed exactly once, rather than broadcast to every consumer.
+Results are placed in input order and the step waits for every active worker before writing or propagating an error.
+These workers run pure transformations; Spring step/job scope propagation and arbitrary skip/retry semantics are not reproduced.
+
+The original seven CLI arguments remain supported. Six optional trailing arguments are:
+
+* Worker count, `1..16`; use `SPRING_PARALLEL` or `DISRUPTOR` for more than one worker.
+* Workload: `ARITHMETIC` or `SHA256`. SHA-256 starts with a 16-byte record and hashes the result repeatedly;
+  `cpuRounds` specifies hash repetitions in this mode, so start with a small value such as `8`.
+* Input: `GENERATED` or `CSV`. CSV is generated before timing and read again by each job.
+* Storage: `MEMORY` or `FILE`. File-backed H2 uses `WRITE_DELAY=0` and stays open until the JVM's suite finishes.
+* Disruptor waiting: `BLOCKING` or `BUSY_SPIN`. This setting does not affect Spring's executor.
+* Ring capacity per Disruptor worker, a power of two up to 65536. Each worker's chunk partition must fit its ring.
+
+Equivalent Gradle properties are `batchWorkers`, `batchWorkload`, `batchInput`, `batchStorage`, `batchWait`
+and `batchRingSize`. Chunk sizes up to 65536 are supported subject to the partition capacity constraint.
+Temporary input and database files are deleted after workers and JDBC resources close.
+CSV and file-database measurements use warmed caches, not cold disk reads, remote database traffic or crash recovery.
+JSON records actual OS, architecture, JVM processor count and maximum heap, plus per-job GC counts and GC time.
+Process CPU and GC figures include the entire JVM, not just transformation workers.
+
+[source,shell script]
+----
+$ ./gradlew build batchComparisonDistribution
+$ python3 src/batchcompare/run_matrix.py --java "$JAVA_HOME/bin/java" --forks 5 --output /tmp/batch-environments
+----
+
+The matrix compares all three modes across light/heavy arithmetic, 1/4/8 workers, small chunks,
+busy-spin waiting, SHA-256, 128/512 MiB heaps, CSV input and memory/file-backed output.
+Five warmup jobs and three measured jobs run within each fresh JVM. Mode order rotates and scenario order reverses
+between repetitions. Results are grouped by scenario and environment; serial and parallel controls are kept distinct.
+Individual timeouts and failed JVMs are reported in `summary.json` and cause a nonzero suite exit.
+The driver gives each JVM an owned temporary directory and removes it even after a failed run.
+Use `--quick` only to verify execution; its small dataset and absent warmup are unsuitable for performance conclusions.
+Use `--scenarios cpu_workers4,sha256,file_output` to select a subset.
+
+The `Java CI with Gradle` workflow also has an optional `batch_environments` manual-dispatch input.
+It runs this extended suite on Linux and macOS in separate jobs, with three fresh JVMs per cell and result artifacts.
+Do not pool those measurements with local results: CPU type, scheduling, filesystem and runtime environment differ.
 
 === Isolated CPU benchmarking
 
