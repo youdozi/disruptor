@@ -205,6 +205,51 @@ that collection delay and define a partial-batch flush policy; this runner does 
 Batch size `1` remains the default. Batch size and arithmetic work can also be passed as two optional trailing
 arguments after the output path when invoking the comparison class directly; the original nine-argument form is supported.
 
+=== Spring Batch comparison
+
+The optional comparison source set uses Spring Boot `4.1.2` dependency management, resolving Spring Batch `6.0.6`
+and Spring Framework `7.0.10`. These dependencies are isolated from the Disruptor library's published artifacts.
+It runs Spring Batch jobs directly; Spring Boot application startup and auto-configuration are not measured.
+
+Both paths use the same checkpointable generated input, arithmetic transformation, chunk size, JDBC job repository,
+transaction manager and JDBC batch writer. The output is an H2 in-memory table, not a remote database or disk benchmark.
+
+* `SPRING`: transform each item in the Spring Batch item processor and write the chunk on the step thread.
+* `DISRUPTOR`: admit the chunk to a 1024-slot single-producer ring, transform it with one platform consumer,
+  wait for every result, then write on the original step thread within the chunk transaction.
+  The consumer uses `BlockingWaitStrategy`; no database transaction is propagated to it.
+
+The adapter implements CPU transformation inside the writer wrapper. Processor failures therefore surface as writer
+failures in that mode; arbitrary skip/retry configurations are not interchangeable with the baseline.
+The comparison retains Spring Batch job management in both modes. It does not measure a complete replacement engine.
+
+[source,shell script]
+----
+$ ./gradlew batchComparisonTest batchComparisonDistribution
+$ java -da -Xms512m -Xmx512m -cp 'build/batch-comparison/lib/*' com.lmax.disruptor.batchcompare.SpringBatchComparison SPRING 250000 4096 1024 5 3 /tmp/spring-batch.json
+$ java -da -Xms512m -Xmx512m -cp 'build/batch-comparison/lib/*' com.lmax.disruptor.batchcompare.SpringBatchComparison DISRUPTOR 250000 4096 1024 5 3 /tmp/disruptor-batch.json
+----
+
+Arguments are mode, item count, arithmetic rounds, chunk size, warmup jobs, measured jobs and output path.
+The equivalent Gradle task is `batchComparison`, with properties `batchMode`, `batchItems`, `batchWork`,
+`batchChunkSize`, `batchWarmups`, `batchRuns` and `batchOutput`.
+
+Each invocation starts a fresh database and JVM. Within it, warmup and measurement execute the same complete job.
+Each job has a new identifying parameter, while the same schema and consumer are reused within that JVM.
+Table cleanup, job construction, schema initialization, reference calculation and result verification are excluded
+from timing. Job execution, checkpoints, commits and execution-status persistence are included.
+CPU seconds include all JVM threads, compilation and GC. Check warmup stability and compare fresh-JVM repetitions
+in alternating order rather than treating successive jobs in one JVM as independent forks.
+
+Every output row is checked for its identifier and exact transformed value. Measured jobs also check read/write
+counts and absence of rollbacks. The dedicated tests inject processor failures and failures after SQL insertion,
+check chunk rollback, and restart from the committed checkpoint without missing or duplicate rows.
+These are same-process restart tests against H2; process-crash recovery and external databases remain untested.
+Report whole-job elapsed time and process CPU time. The small number of jobs does not establish a p99 latency SLO.
+The manual `Spring Batch and Disruptor comparison` workflow repeats both modes in five fresh JVMs per configuration,
+with 64/4096 arithmetic rounds and chunk sizes 128/1024. Its summary takes medians within each JVM before comparing
+fork medians. Shared-runner measurements verify reproducibility; target-machine performance still needs separate validation.
+
 === Isolated CPU benchmarking
 
 Some JMH Benchmarks can be run on machines with isolated cpus to get results with less error.

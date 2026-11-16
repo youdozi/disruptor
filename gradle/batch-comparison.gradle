@@ -1,0 +1,64 @@
+sourceSets {
+    batchcompare {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+    batchcompareTest {
+        compileClasspath += sourceSets.main.output + sourceSets.batchcompare.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.batchcompare.output
+    }
+}
+
+configurations {
+    batchcompareTestImplementation.extendsFrom batchcompareImplementation, testImplementation
+    batchcompareTestRuntimeOnly.extendsFrom batchcompareRuntimeOnly, testRuntimeOnly
+}
+
+dependencies {
+    batchcompareImplementation platform('org.springframework.boot:spring-boot-dependencies:4.1.2')
+    batchcompareImplementation 'org.springframework.batch:spring-batch-core'
+    batchcompareImplementation 'org.springframework:spring-jdbc'
+    batchcompareRuntimeOnly 'com.h2database:h2'
+}
+
+tasks.register('batchComparisonTest', Test) {
+    description = 'Checks Spring Batch transaction and restart behavior with Disruptor processing.'
+    group = 'verification'
+    testClassesDirs = sourceSets.batchcompareTest.output.classesDirs
+    classpath = sourceSets.batchcompareTest.runtimeClasspath
+    useJUnitPlatform()
+    maxParallelForks = 1
+}
+
+check.dependsOn batchComparisonTest
+
+tasks.register('batchComparisonJar', Jar) {
+    group = 'build'
+    archiveAppendix.set('batch-compare')
+    from sourceSets.batchcompare.output
+}
+
+tasks.register('batchComparisonDistribution', Sync) {
+    group = 'build'
+    into layout.buildDirectory.dir('batch-comparison/lib')
+    from tasks.named('jar')
+    from tasks.named('batchComparisonJar')
+    from configurations.batchcompareRuntimeClasspath
+    include '*.jar'
+}
+
+tasks.register('batchComparison', JavaExec) {
+    group = 'verification'
+    description = 'Compares Spring Batch CPU processing with a single Disruptor CPU consumer.'
+    classpath = sourceSets.batchcompare.runtimeClasspath
+    mainClass = 'com.lmax.disruptor.batchcompare.SpringBatchComparison'
+    javaLauncher = javaToolchains.launcherFor(java.toolchain)
+    jvmArgs '-Xms512m', '-Xmx512m'
+    args providers.gradleProperty('batchMode').getOrElse('SPRING'),
+            providers.gradleProperty('batchItems').getOrElse('250000'),
+            providers.gradleProperty('batchWork').getOrElse('4096'),
+            providers.gradleProperty('batchChunkSize').getOrElse('1024'),
+            providers.gradleProperty('batchWarmups').getOrElse('5'),
+            providers.gradleProperty('batchRuns').getOrElse('3'),
+            providers.gradleProperty('batchOutput').getOrElse(layout.buildDirectory.file('reports/batch-comparison/result.json').get().asFile.absolutePath)
+}

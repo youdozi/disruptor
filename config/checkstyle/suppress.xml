@@ -4,15 +4,15 @@
         "https://checkstyle.org/dtds/suppressions_1_2.dtd">
 <suppressions>
     <suppress checks="JavadocType"
-              files="(examples|jcstress|perf|jmh|test)[\\/].*"/>
+              files="(examples|jcstress|perf|jmh|test|batchcompare|batchcompareTest)[\\/].*"/>
     <suppress checks="JavadocVariable"
-              files="(examples|jcstress|perf|jmh|test)[\\/].*"/>
+              files="(examples|jcstress|perf|jmh|test|batchcompare|batchcompareTest)[\\/].*"/>
     <suppress checks="JavadocMethod"
-              files="(examples|jcstress|perf|jmh|test)[\\/].*"/>
+              files="(examples|jcstress|perf|jmh|test|batchcompare|batchcompareTest)[\\/].*"/>
     <suppress checks="MagicNumber"
-              files="(examples|jcstress|perf|jmh|test)[\\/].*"/>
+              files="(examples|jcstress|perf|jmh|test|batchcompare|batchcompareTest)[\\/].*"/>
     <suppress checks="MissingSwitchDefault"
-              files="(examples|jcstress|perf|jmh|test)[\\/].*"/>
+              files="(examples|jcstress|perf|jmh|test|batchcompare|batchcompareTest)[\\/].*"/>
 
     <suppress checks="FinalParameters"
               files="(examples)[\\/].*"/>

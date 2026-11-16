@@ -23,7 +23,24 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
       - name: Build with Gradle
-        run: ./gradlew build examplesClasses jmhJar jcstressClasses perfJar --console=plain
+        run: ./gradlew build examplesClasses jmhJar jcstressClasses perfJar batchComparisonDistribution --console=plain
+      - name: Check Spring Batch comparison
+        shell: bash
+        run: |
+          for mode in SPRING DISRUPTOR; do
+            java -ea -Xms512m -Xmx512m -cp 'build/batch-comparison/lib/*' \
+              com.lmax.disruptor.batchcompare.SpringBatchComparison \
+              "$mode" 1000 64 128 1 1 "build/reports/batch-comparison/$mode.json"
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          results = [json.loads(Path(f'build/reports/batch-comparison/{mode}.json').read_text()) for mode in ['SPRING', 'DISRUPTOR']]
+          assert all(r['springBatch'] == '6.0.6' and r['springFramework'] == '7.0.10' for r in results)
+          samples = [r['samples'][0] for r in results]
+          assert all(s['rows'] == 1000 and s['rollbacks'] == 0 for s in samples)
+          assert samples[0]['checksum'] == samples[1]['checksum'] and samples[0]['commits'] == samples[1]['commits']
+          PY
       - name: Check virtual-thread comparison runner
         run: ./gradlew threadModel -PthreadProducer=VIRTUAL -PthreadConsumer=VIRTUAL -PthreadWarmupSeconds=1 -PthreadMeasureSeconds=1 --console=plain
       - name: Check CPU publication batches
@@ -61,3 +78,4 @@ jobs:
           path: |
             build/libs
             build/reports
+            build/batch-comparison
