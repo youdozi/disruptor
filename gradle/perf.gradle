@@ -38,5 +38,7 @@ tasks.register('threadModel', JavaExec) {
             providers.gradleProperty('threadInFlight').getOrElse('16'),
             providers.gradleProperty('threadWarmupSeconds').getOrElse('2'),
             providers.gradleProperty('threadMeasureSeconds').getOrElse('3'),
-            providers.gradleProperty('threadOutput').getOrElse(layout.buildDirectory.file('reports/thread-model/result.json').get().asFile.absolutePath)
+            providers.gradleProperty('threadOutput').getOrElse(layout.buildDirectory.file('reports/thread-model/result.json').get().asFile.absolutePath),
+            providers.gradleProperty('threadBatchSize').getOrElse('1'),
+            providers.gradleProperty('threadHandlerWork').getOrElse('64')
 }

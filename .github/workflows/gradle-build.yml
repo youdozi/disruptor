@@ -26,6 +26,17 @@ jobs:
         run: ./gradlew build examplesClasses jmhJar jcstressClasses perfJar --console=plain
       - name: Check virtual-thread comparison runner
         run: ./gradlew threadModel -PthreadProducer=VIRTUAL -PthreadConsumer=VIRTUAL -PthreadWarmupSeconds=1 -PthreadMeasureSeconds=1 --console=plain
+      - name: Check CPU publication batches
+        run: |
+          ./gradlew threadModel -PthreadWait=BUSY_SPIN -PthreadBatchSize=8 -PthreadHandlerWork=256 -PthreadWarmupSeconds=1 -PthreadMeasureSeconds=1 -PthreadOutput=build/reports/thread-model/cpu-batch.json --console=plain
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('build/reports/thread-model/cpu-batch.json').read_text())
+          assert result['status'] == 'OK' and result['batchSize'] == 8 and result['handlerWork'] == 256
+          assert 1 <= result['averagePublicationBatchSize'] <= 8
+          assert 0 <= result['censored'] <= result['inFlight']
+          PY
       - name: Check blocking publication benchmark
         shell: bash
         run: |

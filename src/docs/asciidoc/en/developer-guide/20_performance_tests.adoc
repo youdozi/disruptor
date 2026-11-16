@@ -146,6 +146,9 @@ Options:
   `WAIT` simulates blocking I/O wait; it does not measure a database, socket or remote service.
 * `threadStreams`: independent pipelines, default `1`; use `16` to examine oversubscription.
 * `threadInFlight`: admitted events per pipeline, default `16`, range `1..256` with a fixed 1024-slot ring.
+* `threadBatchSize`: maximum events reserved and published together, default `1`, range `1..threadInFlight`.
+* `threadHandlerWork`: dependent arithmetic rounds per event for `CPU`, default `64`, range `0..100000`.
+  This option does not change the 1 ms sleep used by `WAIT`.
 * `threadWarmupSeconds`, `threadMeasureSeconds`: defaults `2` and `3`.
 * `threadOutput`: JSON output path, default `build/reports/thread-model/result.json`.
 
@@ -180,6 +183,27 @@ The manual `Platform and virtual thread comparison` workflow runs all 32 combina
 wait strategies, workloads and 1/16 pipelines twice in fresh JVMs.
 Shared CI results verify execution; use an otherwise idle target machine and repeat runs for performance decisions.
 Keep machine, JVM arguments and carrier parallelism consistent, and compare throughput, p99, censored events and CPU together.
+
+For a CPU-bound single-producer/single-consumer pipeline, compare publication batch sizes while keeping
+`threadInFlight` and `threadHandlerWork` fixed:
+
+[source,shell script]
+----
+$ ./gradlew threadModel -PthreadWait=BUSY_SPIN -PthreadBatchSize=8 -PthreadHandlerWork=256
+----
+
+Repeat with batch size `1` as the control, alternating run order in fresh JVMs.
+The producer waits for one admission permit, then acquires currently available permits up to the batch limit
+without waiting to fill the batch. It reserves a sequence range and publishes it once all payloads are filled.
+Consumers still process, validate and release admission permits for each individual event.
+`averagePublicationBatchSize` reports the actual number of events per publication during measurement.
+This measures the complete runner pipeline, including its admission semaphore; it does not isolate the cost of `RingBuffer.publish`.
+All events in a batch share a timestamp taken after admission and before sequence reservation, so their latency includes
+filling the batch, queueing and handler work. Waiting for the first admission permit is excluded.
+Events are immediately available to fill each batch. A real application that waits to collect events must also measure
+that collection delay and define a partial-batch flush policy; this runner does not model that delay.
+Batch size `1` remains the default. Batch size and arithmetic work can also be passed as two optional trailing
+arguments after the output path when invoking the comparison class directly; the original nine-argument form is supported.
 
 === Isolated CPU benchmarking
 

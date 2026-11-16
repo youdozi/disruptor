@@ -63,6 +63,7 @@ public final class ThreadModelComparison
     {
         final Histogram latency = new Histogram(TimeUnit.MINUTES.toNanos(5), 3);
         long published;
+        long batches;
         long completed;
     }
 
@@ -100,9 +101,9 @@ public final class ThreadModelComparison
 
     public static void main(final String[] args) throws Exception
     {
-        if (args.length != 9)
+        if (args.length != 9 && args.length != 11)
         {
-            throw new IllegalArgumentException("Expected producer consumer wait workload streams inFlight warmupSeconds measureSeconds output.json");
+            throw new IllegalArgumentException("Expected producer consumer wait workload streams inFlight warmupSeconds measureSeconds output.json [batchSize handlerWork]");
         }
         final ThreadKind producer = ThreadKind.valueOf(args[0]);
         final ThreadKind consumer = ThreadKind.valueOf(args[1]);
@@ -112,10 +113,16 @@ public final class ThreadModelComparison
         final int inFlight = Integer.parseInt(args[5]);
         final int warmupSeconds = Integer.parseInt(args[6]);
         final int measureSeconds = Integer.parseInt(args[7]);
+        final int batchSize = args.length == 11 ? Integer.parseInt(args[9]) : 1;
+        final int handlerWork = args.length == 11 ? Integer.parseInt(args[10]) : 64;
         if (streamCount < 1 || inFlight < 1 || inFlight > BUFFER_SIZE / 4 ||
                 warmupSeconds < 1 || warmupSeconds > 60 || measureSeconds < 1 || measureSeconds > 120)
         {
             throw new IllegalArgumentException("Require streams > 0, inFlight 1..256, warmupSeconds 1..60 and measureSeconds 1..120");
+        }
+        if (batchSize < 1 || batchSize > inFlight || handlerWork < 0 || handlerWork > 100000)
+        {
+            throw new IllegalArgumentException("Require batchSize 1..inFlight and handlerWork 0..100000");
         }
 
         final AtomicBoolean running = new AtomicBoolean(true);
@@ -138,9 +145,10 @@ public final class ThreadModelComparison
                 final int streamIndex = i;
                 final Stream stream = new Stream(inFlight, consumers, waiting);
                 streams.add(stream);
-                stream.disruptor.handleEventsWith((event, sequence, endOfBatch) -> consume(stream, streamIndex, workload, event, sequence));
+                stream.disruptor.handleEventsWith((event, sequence, endOfBatch) ->
+                        consume(stream, streamIndex, workload, handlerWork, event, sequence));
                 stream.disruptor.start();
-                producers.newThread(() -> produce(stream, streamIndex, currentWindow, running)).start();
+                producers.newThread(() -> produce(stream, streamIndex, batchSize, currentWindow, running)).start();
             }
             if (!ready.await(10, TimeUnit.SECONDS))
             {
@@ -190,7 +198,7 @@ public final class ThreadModelComparison
         {
             throw new IllegalStateException("Thread-model comparison failed", failure.get());
         }
-        final String result = result(producer, consumer, waiting, workload, inFlight, warmupSeconds,
+        final String result = result(producer, consumer, waiting, workload, inFlight, batchSize, handlerWork, warmupSeconds,
                 measured, streams, threads, cpuNanos, cpuSampleNanos);
         final Path output = Path.of(args[8]).toAbsolutePath();
         Files.createDirectories(output.getParent());
@@ -226,7 +234,7 @@ public final class ThreadModelComparison
     }
 
     private static void produce(
-            final Stream stream, final int streamIndex, final AtomicReference<Window> currentWindow,
+            final Stream stream, final int streamIndex, final int batchSize, final AtomicReference<Window> currentWindow,
             final AtomicBoolean running)
     {
         try
@@ -236,18 +244,32 @@ public final class ThreadModelComparison
             {
                 if (stream.capacity.tryAcquire(100, TimeUnit.MILLISECONDS))
                 {
+                    int claimed = 1;
+                    if (batchSize > 1)
+                    {
+                        final int extra = Math.min(batchSize - 1, stream.capacity.availablePermits());
+                        if (extra > 0 && stream.capacity.tryAcquire(extra))
+                        {
+                            claimed += extra;
+                        }
+                    }
                     final Window window = currentWindow.get();
                     final long startedAt = System.nanoTime();
-                    final long sequence = buffer.next();
-                    final Event event = buffer.get(sequence);
-                    event.startedAt = startedAt;
-                    event.value = sequence;
-                    event.window = window;
+                    final long high = buffer.next(claimed);
+                    final long low = high - claimed + 1;
+                    for (long sequence = low; sequence <= high; sequence++)
+                    {
+                        final Event event = buffer.get(sequence);
+                        event.startedAt = startedAt;
+                        event.value = sequence;
+                        event.window = window;
+                    }
                     if (startedAt - window.deadline < 0)
                     {
-                        window.streams[streamIndex].published++;
+                        window.streams[streamIndex].published += claimed;
+                        window.streams[streamIndex].batches++;
                     }
-                    buffer.publish(sequence);
+                    buffer.publish(low, high);
                 }
             }
         }
@@ -259,7 +281,8 @@ public final class ThreadModelComparison
     }
 
     private static void consume(
-            final Stream stream, final int streamIndex, final Workload workload, final Event event, final long sequence)
+            final Stream stream, final int streamIndex, final Workload workload, final int handlerWork,
+            final Event event, final long sequence)
             throws InterruptedException
     {
         try
@@ -276,7 +299,7 @@ public final class ThreadModelComparison
             }
             else
             {
-                for (int i = 0; i < 64; i++)
+                for (int i = 0; i < handlerWork; i++)
                 {
                     value = Long.rotateLeft(value ^ 0x9E3779B97F4A7C15L, 7) * 0xD1342543DE82EF95L;
                 }
@@ -308,11 +331,13 @@ public final class ThreadModelComparison
 
     private static String result(
             final ThreadKind producer, final ThreadKind consumer, final Waiting waiting, final Workload workload,
-            final int inFlight, final int warmupSeconds, final Window measured, final List<Stream> streams,
+            final int inFlight, final int batchSize, final int handlerWork, final int warmupSeconds,
+            final Window measured, final List<Stream> streams,
             final List<Thread> threads, final long cpuNanos, final long cpuSampleNanos)
     {
         final Histogram histogram = new Histogram(TimeUnit.MINUTES.toNanos(5), 3);
         long published = 0;
+        long batches = 0;
         long completed = 0;
         long checksum = 0;
         int stalled = 0;
@@ -330,6 +355,7 @@ public final class ThreadModelComparison
             }
             histogram.add(samples.latency);
             published += samples.published;
+            batches += samples.batches;
             completed += samples.completed;
             counts.add(samples.completed);
             checksum += streams.get(i).checksum;
@@ -344,15 +370,15 @@ public final class ThreadModelComparison
         final long virtualWorkers = threads.stream().filter(Thread::isVirtual).count();
         return String.format(Locale.ROOT,
                 "{\"producer\":\"%s\",\"consumer\":\"%s\",\"wait\":\"%s\",\"workload\":\"%s\"," +
-                "\"streams\":%d,\"inFlight\":%d,\"warmupSeconds\":%d,\"measureSeconds\":%.3f," +
+                "\"streams\":%d,\"inFlight\":%d,\"batchSize\":%d,\"handlerWork\":%d,\"warmupSeconds\":%d,\"measureSeconds\":%.3f," +
                 "\"status\":\"%s\",\"eventsPerSecond\":%.3f,\"p99Micros\":%s,\"cpuCores\":%.3f,\"cpuSampleSeconds\":%.3f," +
-                "\"published\":%d,\"completed\":%d,\"censored\":%d,\"stalledStreams\":%d," +
+                "\"published\":%d,\"completed\":%d,\"censored\":%d,\"stalledStreams\":%d,\"averagePublicationBatchSize\":%.3f," +
                 "\"perStreamCompleted\":%s,\"checksum\":%d,\"availableProcessors\":%d," +
                 "\"virtualWorkers\":%d,\"platformWorkers\":%d,\"schedulerParallelism\":%d," +
                 "\"assertions\":%b,\"jdk\":\"%s\"}",
-                producer, consumer, waiting, workload, streams.size(), inFlight, warmupSeconds, seconds,
+                producer, consumer, waiting, workload, streams.size(), inFlight, batchSize, handlerWork, warmupSeconds, seconds,
                 status, completed / seconds, p99, (double) cpuNanos / cpuSampleNanos, cpuSampleNanos / 1e9,
-                published, completed, published - completed, stalled, counts, checksum,
+                published, completed, published - completed, stalled, batches == 0 ? 0.0 : (double) published / batches, counts, checksum,
                 Runtime.getRuntime().availableProcessors(), virtualWorkers, threads.size() - virtualWorkers,
                 Integer.getInteger("jdk.virtualThreadScheduler.parallelism", Runtime.getRuntime().availableProcessors()),
                 SingleProducerSequencer.class.desiredAssertionStatus(), Runtime.version());
