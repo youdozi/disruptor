@@ -9,13 +9,17 @@ on:
         description: Run the extended batch comparison on Linux and macOS
         type: boolean
         default: false
+      channel_comparison:
+        description: Compare Spring Integration channels and Disruptor on Linux and macOS
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   build:
-    if: github.event_name != 'workflow_dispatch' || !inputs.batch_environments
+    if: github.event_name != 'workflow_dispatch' || (!inputs.batch_environments && !inputs.channel_comparison)
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -52,6 +56,8 @@ jobs:
           PY
       - name: Check parallel and file-backed comparison paths
         run: python3 src/batchcompare/run_matrix.py --quick --scenarios cpu_workers4,sha256_small_heap,file_input_output --output build/reports/batch-matrix-smoke
+      - name: Check Spring Integration channel comparison
+        run: python3 src/batchcompare/run_channels.py --quick --output build/reports/channel-smoke
       - name: Check virtual-thread comparison runner
         run: ./gradlew threadModel -PthreadProducer=VIRTUAL -PthreadConsumer=VIRTUAL -PthreadWarmupSeconds=1 -PthreadMeasureSeconds=1 --console=plain
       - name: Check CPU publication batches
@@ -116,4 +122,31 @@ jobs:
         with:
           name: batch-environments-${{ matrix.os }}
           path: build/reports/batch-environments
+          if-no-files-found: error
+
+  channel-comparison:
+    if: github.event_name == 'workflow_dispatch' && inputs.channel_comparison
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          java-version: '25'
+          distribution: temurin
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5
+      - name: Build and verify delivery contracts
+        run: ./gradlew build batchComparisonDistribution --console=plain
+      - name: Compare channels in fresh JVMs
+        run: python3 src/batchcompare/run_channels.py --forks 3 --output build/reports/channel-comparison
+      - name: Save channel measurements
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: channel-comparison-${{ matrix.os }}
+          path: build/reports/channel-comparison
           if-no-files-found: error

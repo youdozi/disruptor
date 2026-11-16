@@ -297,6 +297,62 @@ The `Java CI with Gradle` workflow also has an optional `batch_environments` man
 It runs this extended suite on Linux and macOS in separate jobs, with three fresh JVMs per cell and result artifacts.
 Do not pool those measurements with local results: CPU type, scheduling, filesystem and runtime environment differ.
 
+=== Spring Integration channel comparison
+
+`ChannelComparison` measures in-JVM channel delivery without executing Spring Batch jobs or database operations.
+Spring Integration `7.1.2` is resolved through the same Spring Boot `4.1.2` BOM.
+The benchmark reuses the deterministic arithmetic/SHA-256 fixture from the batch comparison.
+
+Two contracts are measured separately:
+
+* `POINT`: `ExecutorChannel`, `QueueChannel` and Disruptor each deliver every message once, without requiring completion order.
+  ExecutorChannel uses a fixed, bounded thread pool. QueueChannel uses dedicated consumers blocking in `receive`,
+  without a periodic poller delay. Disruptor assigns items cyclically across dedicated single-producer rings.
+* `KEYED`: `PartitionedChannel` and Disruptor preserve order and worker affinity for each integer key.
+  Both use the same key hash/modulo mapping. A one-key scenario verifies the hot-partition bottleneck explicitly.
+
+Every mode creates the same `GenericMessage` payload and headers, including the generated message ID and timestamp.
+A common semaphore bounds total admitted messages, including executing work, and blocks the producer under pressure.
+Native queues and each Disruptor ring have capacity equal to that limit; allocated ring slots therefore scale with
+the Disruptor worker count even though total outstanding messages are bounded by the common limit.
+No rejection policy runs handlers on the producer. Consumer-thread execution is verified.
+These results include common message creation, admission, histogram recording and validation overhead;
+they do not isolate a bare queue operation or exercise Disruptor's primitive-payload allocation advantages.
+
+Worker-local bitsets detect duplicates and omissions, each transformed value is verified, and keyed consumers check
+per-key order/affinity. Handler failures are captured consistently, fail the run after draining, and are tested for
+recovery on the next run. Spring error-channel routing, retries, persistence and transaction propagation are not measured.
+Channel initialization and shutdown are excluded from timing; both complete through the normal lifecycle APIs.
+
+[source,shell script]
+----
+$ ./gradlew build batchComparisonDistribution
+$ python3 src/batchcompare/run_channels.py --java "$JAVA_HOME/bin/java" --forks 5 --output /tmp/channel-comparison
+----
+
+The suite covers 1/4 workers, light/heavy arithmetic, SHA-256, capacities 32/1024 and uniform/hot keys.
+Five warmup runs and three measured runs execute per fresh JVM. Mode order rotates and scenario order reverses
+between forks. The JSON summary reports median fork metrics, ranges, whole-run process CPU and active worker counts.
+The `--quick` option checks execution only and must not be used for performance conclusions.
+
+Latency starts before admission and message construction and ends when the handler has transformed and checked
+the value, before histogram recording and permit release. Every successful event contributes a sample.
+Percentiles are per-run completion latencies under a finite, closed-loop saturated producer, not an external-arrival SLO.
+The summary takes medians of run percentiles within each JVM and then across JVMs; it is not a pooled global percentile.
+The shared semaphore and caller-side message creation can themselves limit throughput.
+Whole-run CPU includes workers, producer, compilation and GC. Interpret throughput, tail latency and CPU together.
+
+The `Java CI with Gradle` workflow accepts `channel_comparison=true` on manual dispatch to run the suite on
+Linux and macOS, with three fresh JVMs per configuration and separate artifacts for each operating system.
+The original CLI is also directly available:
+
+[source,shell script]
+----
+$ java -da -Xms256m -Xmx256m -cp 'build/batch-comparison/lib/*' com.lmax.disruptor.batchcompare.ChannelComparison DISRUPTOR KEYED 100000 64 ARITHMETIC 4 1024 64 5 3 /tmp/channel.json
+----
+
+Arguments are mode, contract, items, CPU rounds, workload, workers, capacity, keys, warmups, runs and output path.
+
 === Isolated CPU benchmarking
 
 Some JMH Benchmarks can be run on machines with isolated cpus to get results with less error.

@@ -18,6 +18,8 @@ dependencies {
     batchcompareImplementation platform('org.springframework.boot:spring-boot-dependencies:4.1.2')
     batchcompareImplementation 'org.springframework.batch:spring-batch-core'
     batchcompareImplementation 'org.springframework:spring-jdbc'
+    batchcompareImplementation 'org.springframework.integration:spring-integration-core'
+    batchcompareImplementation 'org.hdrhistogram:HdrHistogram:2.2.2'
     batchcompareRuntimeOnly 'com.h2database:h2'
 }
 
